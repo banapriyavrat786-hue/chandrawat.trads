@@ -14,7 +14,7 @@ st.title("📊 MKPV Professional Trading Dashboard")
 CLIENT_ID = "P51646259"
 API_KEY = "MT72qa1q"
 TOTP_SECRET = "W6SCERQJX4RSU6TXECROABI7TA"
-MPIN = "YOUR_PIN" # <-- Apna PIN yahan dalo
+MPIN = "9171" # <-- Apna PIN yahan dalo
 
 # Greeks Logic
 def get_greeks(S, K, T, r, sigma, option_type="CE"):
