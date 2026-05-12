@@ -1,0 +1,7 @@
+smartapi-python
+pandas
+pyotp
+gspread
+oauth2client
+scipy
+streamlit
