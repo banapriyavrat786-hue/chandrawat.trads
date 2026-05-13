@@ -11,7 +11,7 @@ st.title("🧠 MKPV AI Trading Brain (No-Sheet Version)")
 CLIENT_ID = "P51646259"
 API_KEY = "MT72qa1q"
 TOTP_SECRET = "W6SCERQJX4RSU6TXECROABI7TA"
-MPIN = "YOUR_PIN" # <-- Apna PIN yahan dalo
+MPIN = "9171" # <-- Apna PIN yahan dalo
 
 # UI Components
 m1, m2, m3 = st.columns(3)
