@@ -12,7 +12,7 @@ st.title("🧠 MKPV AI Trading Brain (PRO v2.0)")
 CLIENT_ID = "P51646259"
 API_KEY = "MT72qa1q"
 TOTP_SECRET = "W6SCERQJX4RSU6TXECROABI7TA"
-MPIN = "YOUR_PIN" # <-- PIN dalo
+MPIN = "9171" # <-- PIN dalo
 
 # Greeks Formula (Black-Scholes)
 def get_delta(S, K, T, r, sigma):
