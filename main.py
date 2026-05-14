@@ -5,190 +5,139 @@ from datetime import datetime
 from scipy.stats import norm
 
 # ==========================================
-# 1. LIVE TOKEN MAPPER (FLOAT FIX)
+# 1. DYNAMIC FULL CHAIN MAPPER
 # ==========================================
-@st.cache_data(ttl=43200) 
+@st.cache_data(ttl=43200)
 def get_angel_token_map():
     url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
     try:
         data = requests.get(url).json()
         df = pd.DataFrame(data)
         nifty_df = df[(df['name'] == 'NIFTY') & (df['exch_seg'] == 'NFO') & (df['instrumenttype'] == 'OPTIDX')].copy()
-        
-        # Proper Date format fix
         nifty_df['expiry_date'] = pd.to_datetime(nifty_df['expiry'], format='%d%b%Y', errors='coerce')
-        
-        # FLOAT FIX: Convert string strikes to pure math numbers
         nifty_df['strike_float'] = pd.to_numeric(nifty_df['strike'], errors='coerce') 
         return nifty_df
-    except Exception as e:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-def get_live_atm_tokens(nifty_df, spot_price):
+def get_full_chain_tokens(nifty_df, spot_price, range_strikes=5):
     atm = round(spot_price / 50) * 50
     today = pd.Timestamp.now().normalize()
     future_expiries = nifty_df[nifty_df['expiry_date'] >= today]
-    
-    if future_expiries.empty: return None, None, atm
+    if future_expiries.empty: return []
     
     nearest_expiry = future_expiries.sort_values('expiry_date').iloc[0]['expiry_date']
     current_chain = nifty_df[nifty_df['expiry_date'] == nearest_expiry]
     
-    # Matching using exact math value instead of strings
-    target_strike = float(atm * 100) 
-    
-    try:
-        ce_row = current_chain[(current_chain['strike_float'] == target_strike) & (current_chain['symbol'].str.endswith('CE'))].iloc[0]
-        pe_row = current_chain[(current_chain['strike_float'] == target_strike) & (current_chain['symbol'].str.endswith('PE'))].iloc[0]
-        return ce_row, pe_row, atm
-    except:
-        return None, None, atm
+    chain_data = []
+    # ATM +/- range_strikes (e.g., 5 strikes up and down)
+    for i in range(-range_strikes, range_strikes + 1):
+        strike = atm + (i * 50)
+        target_val = float(strike * 100)
+        try:
+            ce = current_chain[(current_chain['strike_float'] == target_val) & (current_chain['symbol'].str.endswith('CE'))].iloc[0]
+            pe = current_chain[(current_chain['strike_float'] == target_val) & (current_chain['symbol'].str.endswith('PE'))].iloc[0]
+            chain_data.append({'strike': strike, 'ce_token': ce['token'], 'ce_symbol': ce['symbol'], 
+                               'pe_token': pe['token'], 'pe_symbol': pe['symbol']})
+        except: continue
+    return chain_data
 
 # ==========================================
-# 2. REAL IV SOLVER
+# 2. BEAST ANALYSIS ENGINE
 # ==========================================
-class AdvancedQuantMath:
+class FullChainBrain:
     def __init__(self):
         self.r = 0.07
 
-    def bs_price_and_vega(self, S, K, T, sigma, type="CE"):
-        try:
+    def calculate_greeks(self, S, K, T, market_price, type="CE"):
+        # Newton-Raphson for Live IV
+        sigma = 0.18
+        for _ in range(20):
             d1 = (np.log(S / K) + (self.r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
             d2 = d1 - sigma * np.sqrt(T)
             price = S * norm.cdf(d1) - K * np.exp(-self.r * T) * norm.cdf(d2) if type == "CE" else K * np.exp(-self.r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
             vega = S * norm.pdf(d1) * np.sqrt(T)
-            return price, vega
-        except: return 0, 0
-
-    def calculate_live_iv(self, market_price, S, K, T, type="CE"):
-        sigma = 0.20 
-        for i in range(100):
-            price, vega = self.bs_price_and_vega(S, K, T, sigma, type)
             diff = market_price - price
-            if abs(diff) < 1e-5: break
-            if vega == 0: return 0.001
-            sigma += diff / vega 
-        return max(sigma, 0.001)
+            if abs(diff) < 1e-4 or vega == 0: break
+            sigma += diff / vega
+        
+        iv = max(sigma, 0.01)
+        delta = norm.cdf(d1) if type == "CE" else norm.cdf(d1) - 1
+        gamma = norm.pdf(d1) / (S * iv * np.sqrt(T))
+        return round(delta, 2), round(iv * 100, 2), round(gamma, 6)
 
 # ==========================================
-# 3. FEATURE STORE & ML LAYER
+# 3. UI DASHBOARD
 # ==========================================
-class MachineLearningPipeline:
-    def __init__(self):
-        self.feature_db = pd.DataFrame(columns=['Time', 'Spot', 'ATM_Strike', 'Real_CE_Price', 'Live_IV', 'Gamma_Pressure', 'AI_Confidence'])
+st.set_page_config(page_title="MKPV Full-Chain Beast", layout="wide")
+st.markdown("<h1 style='text-align: center; color: #ff00ff;'>🧠 MKPV FULL-CHAIN QUANT BEAST v13.0</h1>", unsafe_allow_html=True)
 
-    def engineer_features(self, real_ce_price, spot, atm, live_iv):
-        gamma_pressure = (real_ce_price / spot) * (live_iv * 100) if spot > 0 else 0
-        return {'Gamma_Pressure': gamma_pressure}
-
-    def ml_predict(self, features):
-        prediction_score = 50 + (features['Gamma_Pressure'] * 1.5)
-        return min(max(prediction_score, 0), 100) 
-
-# ==========================================
-# 4. DASHBOARD & EXECUTION
-# ==========================================
-st.set_page_config(page_title="MKPV 100% LIVE Quant", layout="wide")
-st.markdown("<h1 style='text-align: center; color: #00FFCC;'>📡 MKPV 100% LIVE QUANT ENGINE v12.1</h1>", unsafe_allow_html=True)
-
-m1, m2, m3, m4 = st.columns(4)
-spot_box = m1.empty()
-prem_box = m2.empty()
-iv_box = m3.empty()
-ml_prob_box = m4.empty()
+# Main Stats
+c1, c2, c3 = st.columns(3)
+spot_ui = c1.empty()
+net_gex_ui = c2.empty()
+verdict_ui = c3.empty()
 
 st.divider()
-alert_box = st.empty() # Taki warning screen par stack na ho
-table_placeholder = st.empty()
+chain_table_ui = st.empty()
 
-def start_100_percent_live_engine():
-    quant = AdvancedQuantMath()
-    ml_pipeline = MachineLearningPipeline()
+def start_full_chain_engine():
+    brain = FullChainBrain()
+    # ----------------------------------------
+    CLIENT_ID, API_KEY, TOTP_SECRET, MPIN = "P51646259", "MT72qa1q", "W6SCERQJX4RSU6TXECROABI7TA", "9171"
+    # ----------------------------------------
     
-    # ----------------------------------------
-    CLIENT_ID = "P51646259"
-    API_KEY = "MT72qa1q"
-    TOTP_SECRET = "W6SCERQJX4RSU6TXECROABI7TA"
-    MPIN = "9171" # <-- Apna 4-digit PIN dalein
-    # ----------------------------------------
-
     try:
         otp = pyotp.TOTP(TOTP_SECRET.replace(" ", "")).at(int(time.time()))
         obj = SmartConnect(api_key=API_KEY)
-        session = obj.generateSession(CLIENT_ID, MPIN, otp)
+        obj.generateSession(CLIENT_ID, MPIN, otp)
         
-        if not session.get('status'):
-            st.error(f"Login Failed: {session.get('message')}")
-            return
-            
-        alert_box.info("⚡ API Connected! Downloading JSON Scrip Master... Please Wait.")
-        nifty_token_df = get_angel_token_map()
+        token_df = get_angel_token_map()
         
-        if nifty_token_df.empty:
-            alert_box.error("❌ Token Map download failed. Check network.")
-            return
-            
-        alert_box.success("✅ Tokens Loaded. Entering Live Loop!")
-        time.sleep(2) # Show success for 2 seconds
-        alert_box.empty() # Clear the box
-            
         while True:
-            # 1. FETCH LIVE SPOT
             res_spot = obj.ltpData("NSE", "Nifty 50", "26000")
-            
-            if res_spot['status'] and res_spot['data']:
+            if res_spot['status']:
                 spot = float(res_spot['data']['ltp'])
-                timestamp = datetime.now().strftime("%H:%M:%S")
+                full_chain = get_full_chain_tokens(token_df, spot)
                 
-                # 2. DYNAMIC TOKEN MAPPING
-                ce_row, pe_row, atm_strike = get_live_atm_tokens(nifty_token_df, spot)
+                rows = []
+                total_gex = 0
                 
-                if ce_row is not None:
-                    alert_box.empty() # Clear any previous warnings
-                    ce_token, ce_symbol = ce_row['token'], ce_row['symbol']
+                for strike in full_chain:
+                    # Fetching CE & PE Prices
+                    ce_ltp = float(obj.ltpData("NFO", strike['ce_symbol'], strike['ce_token'])['data']['ltp'])
+                    pe_ltp = float(obj.ltpData("NFO", strike['pe_symbol'], strike['pe_token'])['data']['ltp'])
                     
-                    # 3. 100% LIVE PREMIUM FETCH
-                    res_ce = obj.ltpData("NFO", ce_symbol, ce_token)
+                    ce_delta, ce_iv, ce_gamma = brain.calculate_greeks(spot, strike['strike'], 0.01, ce_ltp, "CE")
+                    pe_delta, pe_iv, pe_gamma = brain.calculate_greeks(spot, strike['strike'], 0.01, pe_ltp, "PE")
                     
-                    if res_ce['status'] and res_ce['data']:
-                        real_ce_price = float(res_ce['data']['ltp'])
-                        
-                        # 4. REAL MATH COMPUTATION
-                        real_iv = quant.calculate_live_iv(real_ce_price, spot, atm_strike, 0.01, "CE")
-                        features = ml_pipeline.engineer_features(real_ce_price, spot, atm_strike, real_iv)
-                        ai_probability = ml_pipeline.ml_predict(features)
-                        
-                        # 5. LOG TO MEMORY
-                        ml_pipeline.feature_db.loc[len(ml_pipeline.feature_db)] = [
-                            timestamp, spot, atm_strike, real_ce_price, round(real_iv * 100, 2), 
-                            round(features['Gamma_Pressure'], 4), round(ai_probability, 1)
-                        ]
-                        
-                        if len(ml_pipeline.feature_db) > 50:
-                            ml_pipeline.feature_db = ml_pipeline.feature_db.iloc[1:].reset_index(drop=True)
-                        
-                        # 6. UI UPDATES
-                        spot_box.metric("LIVE NIFTY SPOT", f"₹{spot}")
-                        prem_box.metric(f"LIVE {atm_strike} CE", f"₹{real_ce_price}", delta=f"Token: {ce_token}")
-                        iv_box.metric("REAL IV (Math Solver)", f"{round(real_iv * 100, 2)}%")
-                        
-                        if ai_probability > 60:
-                            ml_prob_box.metric("ML PRED (BULLISH)", f"{round(ai_probability, 1)}%", delta="Gamma Expansion")
-                        else:
-                            ml_prob_box.metric("ML PRED (BEARISH)", f"{round(ai_probability, 1)}%", delta="-Gamma Compression", delta_color="inverse")
-
-                        with table_placeholder.container():
-                            st.subheader("🗄️ 100% Live Feature Store (Self-Learning Memory)")
-                            st.dataframe(ml_pipeline.feature_db.tail(10).sort_index(ascending=False), use_container_width=True)
-                    else:
-                        alert_box.warning(f"⚠️ Connected, but API returned blank data for {ce_symbol}. Market closed?")
+                    # GEX Calculation (Simplified for UI)
+                    strike_gex = (ce_gamma - pe_gamma) * 1000000 
+                    total_gex += strike_gex
+                    
+                    rows.append({
+                        "Strike": strike['strike'],
+                        "CE Price": ce_ltp, "CE Delta": ce_delta, "CE IV": ce_iv,
+                        "Net GEX": round(strike_gex, 2),
+                        "PE Price": pe_ltp, "PE Delta": pe_delta, "PE IV": pe_iv
+                    })
+                
+                # UI Updates
+                spot_ui.metric("NIFTY SPOT", f"₹{spot}")
+                net_gex_ui.metric("TOTAL NET GEX", f"{round(total_gex, 2)}M", 
+                                  delta="Bullish" if total_gex > 0 else "Bearish")
+                
+                # Beast Verdict
+                if total_gex > 50 and spot > full_chain[0]['strike']:
+                    verdict_ui.success("🔥 SIGNAL: STRONG BUY (Full Chain Support)")
+                elif total_gex < -50:
+                    verdict_ui.error("📉 SIGNAL: STRONG SELL (Full Chain Resistance)")
                 else:
-                    alert_box.warning(f"⏳ Syncing Tokens for Strike {atm_strike}... Retrying.")
-                
-            time.sleep(5) 
-            
-    except Exception as e:
-        st.error(f"System Error: {e}")
+                    verdict_ui.warning("⏳ NEUTRAL (Wait for GEX Breakout)")
 
-if st.sidebar.button("🚀 INITIATE 100% LIVE ENGINE"):
-    start_100_percent_live_engine()
+                chain_table_ui.table(pd.DataFrame(rows))
+                
+            time.sleep(10)
+    except Exception as e: st.error(f"Error: {e}")
+
+if st.sidebar.button("🚀 LAUNCH FULL-CHAIN ENGINE"):
+    start_full_chain_engine()
